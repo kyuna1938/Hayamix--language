@@ -1,0 +1,19 @@
+enum Ope {
+  ASSGN,
+  ADD,
+  SUB,
+  MUL,
+  DIV,
+  PUSH,
+  PUSHI,
+  REMOVE,
+  POP,
+  INC,
+  DEC,
+  JUMP,
+  IF,
+  HALT,
+  INPUT,
+  OUTPUT,
+  ERR   
+}

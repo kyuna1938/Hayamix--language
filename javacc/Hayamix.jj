@@ -1,0 +1,271 @@
+//オプション
+options {
+    LOOKAHEAD = 1;          
+    STATIC = false;         
+    UNICODE_INPUT = true;   
+    DEBUG_PARSER = false;   
+}
+
+//パーサー名
+PARSER_BEGIN (Hayamix)
+
+import java.util.*;
+import java.io.*;
+
+/**
+ * Macro statements are as follows :
+ *   <Main>   ::= "Hayamix" "(" ")" "{" { <Decl> | <State> } "}" EOF
+ *   <Decl>   ::= "int" <NAME> { "," <NAME> } ";"
+ *   <Name>   ::= ( NAME "[" INTEGER "]" ) | NAME
+ *   <State>  ::= <If> | <While> | <Output> | <Assgn> | "{" { <State> } "}"
+ *   <If>     ::= "if" "(" <Exp> ")" <State>
+ *   <While>  ::= "while" "(" <Exp> ")" <State>
+ *   <Output> ::= "outputHayami" "(" <Exp> ")" ";"
+ *   <Assgn>  ::= NAME [ "[" <Exp> "]" ) ] "=" <Exp> ";" 
+ *   <Exp>    ::= <Term> { ( "+" | "-" ) <Term> }
+ *   <Term>   ::= <Factor> { ( "*" | "/" ) <Factor> }
+ *   <Factor> ::= ( NAME "[" <Exp> "]") | NAME | INTEGER | "inputHayami" 
+ * 
+ * Execute as follows :
+ * $ javac Hayamix.java
+ * $ java Hayamix inputfile
+ */
+public class Hayamix {
+    static VarList VarList;     
+    static PIseg iseg;          
+
+    public static void main (String[] args) {
+        VarList = new VarList();
+        iseg = new PIseg();
+        String fileName = "";
+        String extension = "";
+        try {
+            File f = new File(args[0]);
+            fileName = f.getName();
+            extension = fileName.substring(fileName.lastIndexOf("."));
+            if(!extension.equals(".hayami")){
+                System.out.println("You can only use .hayami file");
+                return;
+            }
+            fileName = fileName.substring(0,fileName.lastIndexOf('.')) + ".s";
+            Hayamix parser = new Hayamix (new FileReader (f));
+            parser.enable_tracing();
+            parser.Main();
+            System.out.println ("succese hayamix!!");
+        } catch (Exception err_mes) {
+            System.out.println (err_mes);
+        }
+        
+        iseg.dump2file(fileName);
+        
+    }
+}
+PARSER_END (Hayamix)
+
+
+TOKEN_MGR_DECLS : {}
+
+//空白文字
+SKIP : {
+   <" " | "\t" | "\n" | "\r">
+ | <"//" (~["\n", "\r"])* ["\n","\r"]>
+ | <"/*"> : IN_COMMENT 
+}
+<IN_COMMENT> SKIP : {
+   <~[]>
+ | <"*/"> : DEFAULT
+}
+
+//トークン定義
+TOKEN : {
+    <SEMICOLON:   ";">
+    | <LPAREN:    "(">
+    | <RPAREN:    ")">
+    | <LBRACE:    "{">
+    | <RBRACE:    "}">
+    | <LBRACKET:  "[">
+    | <RBRACKET:  "]">
+    | <COMMA:     "," >
+    | <ASSGN:     "=">
+    | <ADD:       "+">
+    | <SUB:       "-">
+    | <MUL:       "*">
+    | <DIV:       "/">
+    | <INTEGER:   "0" | (["1"-"9"](["0"-"9"])*)>
+    | <IF:        "if">
+    | <WHILE:     "while">
+    | <INT:       "hayami">
+    | <MAIN:      "Hayamix">
+    | <OUTPUTINT: "outputHayami">
+    | <INPUTINT:  "inputHayami">
+    | <NAME :     (["a"-"z"]|["A"-"Z"])(["0"-"9"]|["a"-"z"]|["A"-"Z"])*>
+}
+
+/**
+ * <Main> ::= "Hayamix" "(" "{" { <Decl> } { <State> } "}" <EOF>
+ */
+void Main() :
+{}
+{
+    "Hayamix" "(" ")" "{" ( Decl() )* ( State() )* "}" 
+    <EOF> { iseg.appendCode (Ope.HALT); }
+}
+
+/**
+ * <Decl> ::= "hayami" <NAME> { "," <NAME> }
+ */
+void Decl() :
+{}
+{
+    "hayami" Name() ( "," Name() )*";"
+}
+
+/**
+ * <Name> ::= ( NAME "[" INTEGER "]" ) | NAME
+ */
+void Name() :
+{ String name; int size; }
+{
+    LOOKAHEAD(2) (
+        token = <NAME> { name = token.image; }
+        "["
+        token = <INTEGER> { size = Integer.parseInt (token.image); }
+        "]" { VarList.registerNewVariable (TypeKind.ARRAYOFINT, name, size); }
+    )
+    |
+    token = <NAME> {
+        name = token.image;
+        VarList.registerNewVariable (TypeKind.INT, name, 1);
+    }
+}
+
+/**
+ * <State>  ::= { <If> | <While> | <Output> | <Assgn> | "{" { <State> } "} }
+ */
+void State() :
+{}
+{
+   If() | While() | Output() | Assgn() | "{" ( State() )* "}"
+}
+
+/**
+ * <If>     ::= "if" "(" <Exp> ")" <State> 
+ */
+void If() :
+{ int beqAddr, nextAddr; }
+{
+    "if" "("
+    Exp() { beqAddr = iseg.appendCode (Ope.BEQ); }
+    ")"
+    State() {
+        nextAddr = iseg.getLastCodeAddress() + 1;
+        iseg.replaceCode (beqAddr, nextAddr);
+    }
+}
+
+/**
+ * <While>  ::= "while" "(" <Exp> ")" <State> 
+ */
+void While() :
+{ int expAddr, beqAddr, nextAddr; }
+{
+    "while" "(" { expAddr = iseg.getLastCodeAddress() + 1; } 
+    Exp() { beqAddr = iseg.appendCode (Ope.BEQ); }
+    ")"
+    State() {
+        nextAddr = iseg.appendCode (Ope.JUMP, expAddr) + 1;
+        iseg.replaceCode (beqAddr, nextAddr);
+    }
+}
+
+/**
+ * <Output> ::= "outputHayami" "(" <Exp> ")" ;
+ */
+void Output() :
+{}
+{
+    "outputHayami" "(" 
+    Exp() { iseg.appendCode (Ope.OUTPUT); }
+    ")" ";"
+}
+
+/**
+ * <Assgn>  ::= NAME [ "[" <Exp> "]" ] "=" <Exp> ";"
+ */
+void Assgn() :
+{ String name; int addr; }
+{
+    token = <NAME> {
+        name = token.image;
+        addr = VarList.getAddress(name);
+        iseg.appendCode (Ope.PUSHI, addr);
+    }
+    [
+        "["
+        Exp()
+        "]" { iseg.appendCode (Ope.ADD); }
+    ]
+    "="
+    Exp() { iseg.appendCode (Ope.ASSGN); }
+    ";" { iseg.appendCode (Ope.REMOVE); }
+}
+
+ 
+/**
+ * <Exp>    ::= <Term> { ( "+" | "-" ) <Term> }
+ */
+void Exp() :
+{ Ope opcode; }
+{
+    Term()
+    (
+        ( "+" { opcode = Ope.ADD; } 
+        | "-" { opcode = Ope.SUB; } )
+        Term() { iseg.appendCode (opcode); }
+    )*
+}
+
+/**
+ * <Term>   ::= <Factor> { ( "*" | "/" ) <Factor> }
+ */
+void Term() :
+{ Ope opcode; }
+{
+    Factor()
+    (
+       ( "*" { opcode = Ope.MUL; } 
+       | "/" { opcode = Ope.DIV; } )
+       Factor() { iseg.appendCode (opcode); }
+    )*
+}
+
+/**
+ * <Factor> ::= ( NAME "[" <Exp> "]" ) | NAME | INTEGER | "inputHayami"
+ */
+void Factor() :
+{ int val, addr; String name; }
+{
+    LOOKAHEAD(2) (
+        token = <NAME> {
+            name = token.image;
+            addr = VarList.getAddress (name);
+            iseg.appendCode (Ope.PUSHI, addr);
+        }
+        "["
+        Exp()
+        "]" {
+            iseg.appendCode (Ope.ADD);
+            iseg.appendCode (Ope.LOAD);
+        }
+    )
+    | token = <NAME> {
+        name = token.image;
+        addr = VarList.getAddress (name);
+        iseg.appendCode (Ope.PUSH, addr);
+    }
+    | token = <INTEGER> {
+        val = Integer.parseInt (token.image);
+        iseg.appendCode (Ope.PUSHI, val);
+    }
+    | "inputHayami" { iseg.appendCode (Ope.INPUT); }
+}

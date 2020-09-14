@@ -1,0 +1,9 @@
+Hayamix(){
+    //comments
+    /*
+    aaa
+    */
+    hayami i;
+    i = inputHayami;
+    outputHayami(i);
+}
